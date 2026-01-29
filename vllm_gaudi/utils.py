@@ -6,8 +6,6 @@ import vllm.utils.torch_utils as torch_utils
 from vllm_gaudi.extension.runtime import get_config
 from typing import (Any, Optional, TypeVar, Union)
 import torch
-import numpy as np
-import numpy.typing as npt
 import math
 
 T = TypeVar("T")
@@ -103,9 +101,7 @@ def make_tensor_with_pad_align(
 
     # 2. Use pad_sequence (pure torch implementation)
     #    batch_first=True -> (Batch, Seq)
-    tensor = torch.nn.utils.rnn.pad_sequence(
-        tensors, batch_first=True, padding_value=pad
-    )
+    tensor = torch.nn.utils.rnn.pad_sequence(tensors, batch_first=True, padding_value=pad)
 
     # 3. Calculate aligned length and pad if necessary
     batch_size, seq_len = tensor.shape
@@ -113,9 +109,7 @@ def make_tensor_with_pad_align(
 
     if seq_len < aligned_len:
         padding_size = aligned_len - seq_len
-        padding = torch.full(
-            (batch_size, padding_size), pad, dtype=dtype, device="cpu"
-        )
+        padding = torch.full((batch_size, padding_size), pad, dtype=dtype, device="cpu")
         tensor = torch.cat((tensor, padding), dim=1)
 
     # 4. Move to target device
@@ -154,18 +148,14 @@ def make_tensor_with_pad(
 
     # 2. Use pad_sequence (pure torch implementation)
     #    batch_first=True -> (Batch, Seq)
-    tensor = torch.nn.utils.rnn.pad_sequence(
-        tensors, batch_first=True, padding_value=pad
-    )
+    tensor = torch.nn.utils.rnn.pad_sequence(tensors, batch_first=True, padding_value=pad)
 
     # 3. Handle max_len truncation or specific padding if requested
     if max_len is not None:
         batch_size, seq_len = tensor.shape
         if seq_len < max_len:
             padding_size = max_len - seq_len
-            padding = torch.full(
-                (batch_size, padding_size), pad, dtype=dtype, device="cpu"
-            )
+            padding = torch.full((batch_size, padding_size), pad, dtype=dtype, device="cpu")
             tensor = torch.cat((tensor, padding), dim=1)
         elif seq_len > max_len:
             tensor = tensor[:, :max_len]
@@ -183,26 +173,23 @@ def make_tensor_with_pad(
 # Apply the patch to the core vLLM module
 torch_utils.make_tensor_with_pad = make_tensor_with_pad
 
-_modules_to_patch = [
-    "vllm.v1.sample.ops.penalties",
-    "vllm.model_executor.layers.utils", 
-    "vllm.utils"
-]
+_modules_to_patch = ["vllm.v1.sample.ops.penalties", "vllm.model_executor.layers.utils", "vllm.utils"]
 
 for module_name in _modules_to_patch:
     if module_name in sys.modules:
-        try:
+        if hasattr(sys.modules[module_name], 'make_tensor_with_pad'):
             sys.modules[module_name].make_tensor_with_pad = make_tensor_with_pad
-        except AttributeError:
-            pass # Module loaded but doesn't use/expose this function
 
 
 def make_mrope_positions_tensor_with_pad(input_positions: list[list[int]], input_mrope_positions: list[list[list[int]]],
                                          max_prompt_len: int, pad: int) -> list[list[int]]:
     # If no mrope positions, returns a flatten (seq_len,)
     if all(mrope_position is None for mrope_position in input_mrope_positions):
-        return torch_utils.make_tensor_with_pad(input_positions, max_len=max_prompt_len, pad=0,
-                                    dtype=torch.long, device='cpu').flatten()
+        return torch_utils.make_tensor_with_pad(input_positions,
+                                                max_len=max_prompt_len,
+                                                pad=0,
+                                                dtype=torch.long,
+                                                device='cpu').flatten()
     # Otherwise, Qwen2.5-VL expects positions in a (3, seq_len)
     # we are going to pad each seq_data in the list
     # using either MRope values or regular position
