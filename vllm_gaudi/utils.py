@@ -1,5 +1,6 @@
 from functools import cache
 import os
+import sys
 from vllm.config import ModelConfig
 import vllm.utils.torch_utils as torch_utils
 from vllm_gaudi.extension.runtime import get_config
@@ -181,6 +182,19 @@ def make_tensor_with_pad(
 
 # Apply the patch to the core vLLM module
 torch_utils.make_tensor_with_pad = make_tensor_with_pad
+
+_modules_to_patch = [
+    "vllm.v1.sample.ops.penalties",
+    "vllm.model_executor.layers.utils", 
+    "vllm.utils"
+]
+
+for module_name in _modules_to_patch:
+    if module_name in sys.modules:
+        try:
+            sys.modules[module_name].make_tensor_with_pad = make_tensor_with_pad
+        except AttributeError:
+            pass # Module loaded but doesn't use/expose this function
 
 
 def make_mrope_positions_tensor_with_pad(input_positions: list[list[int]], input_mrope_positions: list[list[list[int]]],
