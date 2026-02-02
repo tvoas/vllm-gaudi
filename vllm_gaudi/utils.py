@@ -1,7 +1,7 @@
 from functools import cache
 import os
 from vllm.config import ModelConfig
-from vllm.utils.torch_utils import make_tensor_with_pad, TORCH_DTYPE_TO_NUMPY_DTYPE
+from vllm.utils.torch_utils import make_tensor_with_pad, TORCH_DTYPE_TO_NUMPY_DTYPE, make_ndarray_with_pad
 from vllm_gaudi.extension.runtime import get_config
 from typing import (Any, Optional, TypeVar, Union)
 import torch
@@ -11,6 +11,8 @@ import math
 
 T = TypeVar("T")
 U = TypeVar("U")
+
+torch.compiler.disable(make_ndarray_with_pad)
 
 
 @cache
