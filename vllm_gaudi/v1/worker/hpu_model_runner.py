@@ -501,17 +501,12 @@ class HpuModelAdapter(torch.nn.Module, HpuKVConnectorModelRunnerMixin):
            MULTIMODAL_REGISTRY.supports_multimodal_inputs(vllm_config.model_config) and self.is_mm_optimized:
             if hasattr(self.model, 'vision_tower'):
                 self.model.vision_tower = htorch.hpu.wrap_in_hpu_graph(self.model.vision_tower,
-                                                                        disable_tensor_cache=False)
-            elif hasattr(self.model, 'visual'):
-                self.model.visual = htorch.hpu.wrap_in_hpu_graph(self.model.visual,
-                                                                        disable_tensor_cache=False)
+                                                                       disable_tensor_cache=False)
             if hasattr(self.model, 'multi_modal_projector'):
                 self.model.multi_modal_projector = \
                         htorch.hpu.wrap_in_hpu_graph( \
                         self.model.multi_modal_projector, \
                         disable_tensor_cache=True)
-        else:
-            self.model = _maybe_wrap_in_hpu_graph(self.model, vllm_config=self.vllm_config)
 
     def _get_rotary_embedding_module(self, model: torch.nn.Module):
         """
