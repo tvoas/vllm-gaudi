@@ -347,15 +347,21 @@ class HPUWorker(WorkerBase):
         step_time = time.perf_counter() - start_time
 
         # Determine step type (prefill vs decode)
-        step_type = "prefill" if scheduler_output.num_prefill_tokens > 0 else "decode"
+        is_prefill = len(scheduler_output.scheduled_new_reqs) > 0 or \
+                     any(out_toks == 0 for out_toks in scheduler_output.scheduled_cached_reqs.num_output_tokens)
+        step_type = "prefill" if is_prefill else "decode"
+        
+        # Collect request IDs for logging
+        req_ids = [req.req_id for req in scheduler_output.scheduled_new_reqs] + \
+                  scheduler_output.scheduled_cached_reqs.req_ids
         
         # Log to CSV
-        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
+        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "vllm_times.csv")
         file_exists = os.path.isfile(csv_path)
         with open(csv_path, "a") as f:
             if not file_exists:
                 f.write("step_type,req_ids,time_s\n")
-            f.write(f"{step_type},N/A,{step_time:.6f}\n")
+            f.write(f"{step_type},{';'.join(req_ids)},{step_time:.6f}\n")
         # TODO(woosuk): Send the output to the engine process.
         if self.step_profiler:
             if self.step >= self.profile_steps[0]:
