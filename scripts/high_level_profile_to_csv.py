@@ -16,6 +16,10 @@ def json_to_csv(json_name):
             lines[-1] = lines[-1][:-1] + "]"
         records = json.loads("".join(lines))
 
+    # Add this check
+    if isinstance(records, dict) and "traceEvents" in records:
+        records = records["traceEvents"]
+
     records = [record for record in records if is_valid_record(record)]
     if not records:
         return
@@ -88,7 +92,7 @@ def json_to_csv(json_name):
         csv_name = json_name.replace(".json", ".csv")
         print(f"Saving CSV file to {csv_name}")
         out_keys = out_records[0].keys()
-        with open(csv_name, 'w', newline='') as output_file:
+        with open(csv_name.split("\\")[-1], 'w', newline='') as output_file:
             dict_writer = csv.DictWriter(output_file, out_keys)
             dict_writer.writeheader()
             dict_writer.writerows(out_records)
