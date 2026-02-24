@@ -7,6 +7,8 @@ import queue
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Optional
 
+import time
+
 import torch
 import torch.distributed
 import torch.nn as nn
@@ -334,10 +336,26 @@ class HPUWorker(WorkerBase):
             self.step_debug(f'step={self.step}')
         if self.step_profiler and self.step == self.profile_steps[0]:
             self.step_profiler.start()
+        torch.hpu.synchronize()
+        start_time = time.perf_counter()
         with track_graph_compile('HPUWorker.execute_model') \
                 if self.gc_track_recompiles \
                 else contextlib.nullcontext():
             output = self.model_runner.execute_model(scheduler_output)
+
+        torch.hpu.synchronize()
+        step_time = time.perf_counter() - start_time
+
+        # Determine step type (prefill vs decode)
+        step_type = "prefill" if scheduler_output.num_prefill_tokens > 0 else "decode"
+        
+        # Log to CSV
+        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
+        file_exists = os.path.isfile(csv_path)
+        with open(csv_path, "a") as f:
+            if not file_exists:
+                f.write("step_type,req_ids,time_s\n")
+            f.write(f"{step_type},N/A,{step_time:.6f}\n")
         # TODO(woosuk): Send the output to the engine process.
         if self.step_profiler:
             if self.step >= self.profile_steps[0]:

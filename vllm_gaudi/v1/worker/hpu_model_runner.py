@@ -1373,6 +1373,9 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
 
     # source: vllm/v1/worker/gpu_model_runner.py
     def _execute_mm_encoder(self, scheduler_output: "SchedulerOutput", req_ids: list[str]):
+        torch.hpu.synchronize()
+        start_time = time.perf_counter()
+
         # Batch the multi-modal inputs.
         mm_kwargs = list[tuple[str, MultiModalKwargsItem]]()
         # List of tuple (mm_hash, pos_info)
@@ -1450,6 +1453,17 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
                 scattered_output = placeholders
 
             self.encoder_cache[mm_hash] = scattered_output
+
+        torch.hpu.synchronize()
+        encoder_time = time.perf_counter() - start_time
+
+        # Log to CSV
+        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
+        file_exists = os.path.isfile(csv_path)
+        with open(csv_path, "a") as f:
+            if not file_exists:
+                f.write("step_type,req_ids,time_s\n")
+            f.write(f"encoder,{';'.join(req_ids)},{encoder_time:.6f}\n")
 
     # modified from: vllm/v1/worker/gpu_model_runner.py
     def _gather_mm_embeddings(
