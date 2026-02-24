@@ -511,7 +511,7 @@ class HpuModelAdapter(torch.nn.Module, HpuKVConnectorModelRunnerMixin):
                         self.model.multi_modal_projector, \
                         disable_tensor_cache=True)
         else:
-            self.model.visual = _maybe_wrap_in_hpu_graph(self.model.visual, vllm_config=self.vllm_config)
+            self.model = _maybe_wrap_in_hpu_graph(self.model, vllm_config=self.vllm_config)
 
     def _get_rotary_embedding_module(self, model: torch.nn.Module):
         """
