@@ -1457,13 +1457,18 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         torch.hpu.synchronize()
         encoder_time = time.perf_counter() - start_time
 
+        # Calculate metrics
+        mm_items = sum(len(scheduler_output.scheduled_encoder_inputs.get(req_id, [])) for req_id in req_ids)
+        cache_misses = len(mm_hashes_pos)
+        cache_hits = mm_items - cache_misses
+
         # Log to CSV
-        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
+        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "vllm_times.csv")
         file_exists = os.path.isfile(csv_path)
         with open(csv_path, "a") as f:
             if not file_exists:
-                f.write("step_type,req_ids,s_time_s,d_time_s\n")
-            f.write(f"encoder,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f}\n")
+                f.write("step_type,req_ids,s_time_s,d_time_s,batch_size,total_tokens,ctx_lens,computed_tokens,mm_items,cache_hits\n")
+            f.write(f"encoder,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f},{len(req_ids)},0,,, {mm_items},{cache_hits}\n")
 
     # modified from: vllm/v1/worker/gpu_model_runner.py
     def _gather_mm_embeddings(

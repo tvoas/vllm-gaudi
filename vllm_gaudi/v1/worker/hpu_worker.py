@@ -346,22 +346,39 @@ class HPUWorker(WorkerBase):
         torch.hpu.synchronize()
         step_time = time.perf_counter() - start_time
 
+
         # Determine step type (prefill vs decode)
         is_prefill = len(scheduler_output.scheduled_new_reqs) > 0 or \
                      any(out_toks == 0 for out_toks in scheduler_output.scheduled_cached_reqs.num_output_tokens)
         step_type = "prefill" if is_prefill else "decode"
         
-        # Collect request IDs for logging
-        req_ids = [req.req_id for req in scheduler_output.scheduled_new_reqs] + \
-                  scheduler_output.scheduled_cached_reqs.req_ids
+        # Collect request IDs and metrics for logging
+        new_reqs = scheduler_output.scheduled_new_reqs
+        cached_reqs = scheduler_output.scheduled_cached_reqs
+        req_ids = [req.req_id for req in new_reqs] + cached_reqs.req_ids
         
+        batch_size = len(req_ids)
+        total_tokens = scheduler_output.total_num_scheduled_tokens
+        
+        ctx_lens = []
+        computed_tokens = []
+        for req in new_reqs:
+            ctx_lens.append(str(len(req.prompt_token_ids) if req.prompt_token_ids else 0))
+            computed_tokens.append(str(req.num_computed_tokens))
+        for i in range(len(cached_reqs.req_ids)):
+            ctx_lens.append(str(cached_reqs.num_computed_tokens[i] + cached_reqs.num_output_tokens[i]))
+            computed_tokens.append(str(cached_reqs.num_computed_tokens[i]))
+            
+        mm_items = sum(len(v) for v in scheduler_output.scheduled_encoder_inputs.values())
+
         # Log to CSV
         csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
         file_exists = os.path.isfile(csv_path)
         with open(csv_path, "a") as f:
             if not file_exists:
-                f.write("step_type,req_ids,s_time_s,d_time_s\n")
-            f.write(f"{step_type},{';'.join(req_ids)},{start_time:.6f},{step_time:.6f}\n")
+                f.write("step_type,req_ids,s_time_s,d_time_s,batch_size,total_tokens,ctx_lens,computed_tokens,mm_items,cache_hits\n")
+            f.write(f"{step_type},{';'.join(req_ids)},{start_time:.6f},{step_time:.6f},{batch_size},{total_tokens},{';'.join(ctx_lens)},{';'.join(computed_tokens)},{mm_items},0\n")
+
         # TODO(woosuk): Send the output to the engine process.
         if self.step_profiler:
             if self.step >= self.profile_steps[0]:
