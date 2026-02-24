@@ -289,6 +289,9 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
                 ) for layer_idx in range(depth)
             ])
 
+        import habana_frameworks.torch.hpu as hpu
+        self.graphed_forward = hpu.wrap_in_hpu_graph(self.forward, disable_tensor_cache=True)
+
     def pre_attn(self, x: torch.Tensor, grid_thw: torch.Tensor):
         # patchify
         seq_len, _ = x.size()
@@ -440,6 +443,28 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
                                          padding_attn_mask_window=padding_attn_mask_window,
                                          padding_attn_mask_full=padding_attn_mask_full,
                                          cu_seqlens=cu_seqlens)
+            
+            padded_len = hidden_states.shape[0]
+            use_graph = True
+            if hasattr(vision_buckets, 'use_graph'):
+                use_graph = vision_buckets.use_graph(padded_len)
+
+            if use_graph:
+                hidden_states = self.graphed_forward(
+                                        hidden_states,
+                                        rotary_pos_emb_cos=rot_pos_emb_cos,
+                                        rotary_pos_emb_sin=rot_pos_emb_sin,
+                                        padding_attn_mask_window=padding_attn_mask_window,
+                                        padding_attn_mask_full=padding_attn_mask_full,
+                                        cu_seqlens=cu_seqlens)
+            else:
+                hidden_states = self.forward(
+                                        hidden_states,
+                                        rotary_pos_emb_cos=rot_pos_emb_cos,
+                                        rotary_pos_emb_sin=rot_pos_emb_sin,
+                                        padding_attn_mask_window=padding_attn_mask_window,
+                                        padding_attn_mask_full=padding_attn_mask_full,
+                                        cu_seqlens=cu_seqlens)
             htcore.mark_step()
 
             # remove padding
