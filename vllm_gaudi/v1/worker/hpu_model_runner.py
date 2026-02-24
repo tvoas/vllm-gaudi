@@ -1463,7 +1463,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         cache_hits = mm_items - cache_misses
 
         # Log to CSV
-        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "vllm_times.csv")
+        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
         file_exists = os.path.isfile(csv_path)
         with open(csv_path, "a") as f:
             if not file_exists:
