@@ -1462,8 +1462,8 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         file_exists = os.path.isfile(csv_path)
         with open(csv_path, "a") as f:
             if not file_exists:
-                f.write("step_type,req_ids,time_s\n")
-            f.write(f"encoder,{';'.join(req_ids)},{encoder_time:.6f}\n")
+                f.write("step_type,req_ids,s_time_s,d_time_s\n")
+            f.write(f"encoder,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f}\n")
 
     # modified from: vllm/v1/worker/gpu_model_runner.py
     def _gather_mm_embeddings(

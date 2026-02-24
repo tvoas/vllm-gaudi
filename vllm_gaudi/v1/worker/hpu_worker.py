@@ -360,8 +360,8 @@ class HPUWorker(WorkerBase):
         file_exists = os.path.isfile(csv_path)
         with open(csv_path, "a") as f:
             if not file_exists:
-                f.write("step_type,req_ids,time_s\n")
-            f.write(f"{step_type},{';'.join(req_ids)},{step_time:.6f}\n")
+                f.write("step_type,req_ids,s_time_s,d_time_s\n")
+            f.write(f"{step_type},{';'.join(req_ids)},{start_time:.6f},{step_time:.6f}\n")
         # TODO(woosuk): Send the output to the engine process.
         if self.step_profiler:
             if self.step >= self.profile_steps[0]:
