@@ -420,17 +420,27 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
                     + str(bucket_size)
                 logger.info(logger_msg)
                 cu_seqlens = F.pad(cu_seqlens, (0, 1), "constant", bucket_size)
-                cu_window_seqlens = F.pad(cu_window_seqlens, (0, 1), "constant", bucket_size)
-                hidden_states = F.pad(hidden_states, (0, 0, 0, num_pad_tokens), "constant", -100)
-                rot_pos_emb_cos = F.pad(
-                    rot_pos_emb_cos,  # [seq, dim]
-                    (0, 0, 0, num_pad_tokens),
-                    "constant",
-                    0.0)
-            rot_pos_emb_sin = F.pad(rot_pos_emb_sin, (0, 0, 0, num_pad_tokens), "constant", 0.0)
+                hidden_states = F.pad(hidden_states, (0, 0, 0, num_pad_tokens), "constant", 0.0)
+                rot_pos_emb_cos = F.pad(rot_pos_emb_cos, (0, 0, 0, num_pad_tokens), "constant", 0.0)
+                rot_pos_emb_sin = F.pad(rot_pos_emb_sin, (0, 0, 0, num_pad_tokens), "constant", 0.0)
 
             padding_attn_mask_full = create_block_diagonal_attention_mask(cu_seqlens)
             padding_attn_mask_window = create_block_diagonal_attention_mask(cu_window_seqlens)
+            
+            # Pad the masks to bucket_size to ensure static shapes for the HPU Graph
+            if num_pad_tokens > 0:
+                padding_attn_mask_full = F.pad(
+                    padding_attn_mask_full, 
+                    (0, num_pad_tokens, 0, num_pad_tokens), 
+                    "constant", 
+                    False
+                )
+                padding_attn_mask_window = F.pad(
+                    padding_attn_mask_window, 
+                    (0, num_pad_tokens, 0, num_pad_tokens), 
+                    "constant", 
+                    False
+                )
 
             # static part
             htcore.mark_step()
