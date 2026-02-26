@@ -2,7 +2,7 @@ import os
 from functools import partial
 from typing import Optional, Callable, Union
 from collections.abc import Mapping
-
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -22,7 +22,7 @@ from vllm.model_executor.models.qwen2_5_vl import (
     Qwen2_5_VLVideoPixelInputs, Qwen2_5_VLProcessor)
 
 from vllm.model_executor.layers.rotary_embedding.common import ApplyRotaryEmb
-
+from vllm.model_executor.models.interfaces import MultiModalEmbeddings
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.activation import get_act_and_mul_fn
 from vllm.model_executor.layers.quantization import QuantizationConfig
@@ -506,6 +506,72 @@ class HpuQwen2_5_VLForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                 quant_config=self.quant_config,
                 prefix=maybe_prefix(prefix, "visual"),
             )
+
+    def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
+        torch.hpu.synchronize()
+        start_time = time.perf_counter()
+        mm_input_by_modality = self._parse_and_validate_multimodal_inputs(**kwargs)
+        if not mm_input_by_modality:
+            return []
+
+        total_mm_items = 0
+        first_img_info = ""
+
+        if "image" in mm_input_by_modality:
+            img_input = mm_input_by_modality["image"]
+            grid_thw = img_input.get("image_grid_thw")
+            if grid_thw is not None:
+                total_mm_items += grid_thw.shape[0]
+                if grid_thw.shape[0] > 0 and not first_img_info:
+                    t, h, w = grid_thw[0].tolist()
+                    tensor_data = img_input.get("pixel_values", img_input.get("image_embeds"))
+                    if tensor_data is not None:
+                        dtype = str(tensor_data.dtype).split('.')[-1]
+                        shape = "x".join(map(str, tensor_data.shape))
+                        first_img_info = f"_img[thw:{t}x{h}x{w}_shape:{shape}_dtype:{dtype}]"
+
+        if "video" in mm_input_by_modality:
+            vid_input = mm_input_by_modality["video"]
+            grid_thw = vid_input.get("video_grid_thw")
+            if grid_thw is not None:
+                total_mm_items += grid_thw.shape[0]
+
+        # The result multimodal_embeddings is tuple of tensors, with each
+        # tensor correspoending to a multimodal data item (image or video).
+        multimodal_embeddings: tuple[torch.Tensor, ...] = ()
+
+        # NOTE: It is important to iterate over the keys in this dictionary
+        # to preserve the order of the modalities.
+        for modality in mm_input_by_modality:
+            multimodal_input = mm_input_by_modality[modality]
+            if modality == "image":
+                image_embeddings = self._process_image_input(multimodal_input)
+                if self.is_multimodal_pruning_enabled:
+                    image_embeddings = self._postprocess_image_embeds_evs(
+                        image_embeddings, multimodal_input
+                    )
+                multimodal_embeddings += tuple(image_embeddings)
+            if modality == "video":
+                video_embeddings = self._process_video_input(multimodal_input)
+                if self.is_multimodal_pruning_enabled:
+                    video_embeddings = self._postprocess_video_embeds_evs(
+                        video_embeddings, multimodal_input
+                    )
+                multimodal_embeddings += tuple(video_embeddings)
+
+        torch.hpu.synchronize()
+        encoder_time = time.perf_counter() - start_time
+        
+        step_type_str = f"embed_multimodal{first_img_info}"
+        
+        # Log to CSV
+        csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")
+        file_exists = os.path.isfile(csv_path)
+        with open(csv_path, "a") as f:
+            if not file_exists:
+                f.write("step_type,req_ids,s_time_s,d_time_s,batch_size,total_tokens,ctx_lens,computed_tokens,mm_items,cache_hits\n")
+            f.write(f"{step_type_str},,{start_time:.6f},{encoder_time:.6f},,0,,,{total_mm_items},\n")
+        return multimodal_embeddings
 
     def _parse_and_validate_image_input_v1(self, **kwargs: object) -> Optional[Qwen2_5_VLImageInputs]:
         pixel_values = kwargs.pop("pixel_values", None)
