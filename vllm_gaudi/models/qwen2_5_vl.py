@@ -534,11 +534,24 @@ class HpuQwen2_5_VLForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
                 total_mm_items += grid_thw.shape[0]
                 if grid_thw.shape[0] > 0 and not first_img_info:
                     t, h, w = grid_thw[0].tolist()
-                    tensor_data = img_input.get("pixel_values", img_input.get("image_embeds"))
+                    
+                    tensor_name = "none"
+                    tensor_data = None
+                    if "pixel_values" in img_input:
+                        tensor_data = img_input["pixel_values"]
+                        tensor_name = "px"
+                    elif "image_embeds" in img_input:
+                        tensor_data = img_input["image_embeds"]
+                        tensor_name = "emb"
+                        
                     if tensor_data is not None:
-                        dtype = str(tensor_data.dtype).split('.')[-1]
-                        shape = "x".join(map(str, tensor_data.shape))
-                        first_img_info = f"_img[thw:{t}x{h}x{w}_shape:{shape}_dtype:{dtype}]"
+                        if isinstance(tensor_data, list) and len(tensor_data) > 0:
+                            dtype = str(tensor_data[0].dtype).split('.')[-1]
+                            shape = f"list[{len(tensor_data)}x" + "x".join(map(str, tensor_data[0].shape)) + "]"
+                        else:
+                            dtype = str(tensor_data.dtype).split('.')[-1]
+                            shape = "x".join(map(str, tensor_data.shape))
+                        first_img_info = f"_img[{tensor_name}_thw:{t}x{h}x{w}_shape:{shape}_dtype:{dtype}]"
 
         if "video" in mm_input_by_modality:
             vid_input = mm_input_by_modality["video"]
