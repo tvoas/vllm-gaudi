@@ -1372,7 +1372,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         return {}
 
     # source: vllm/v1/worker/gpu_model_runner.py
-    def _execute_mm_encoder(self, scheduler_output: "SchedulerOutput", req_ids: list[str]):
+    def _execute_mm_encoder(self, scheduler_output: "SchedulerOutput", req_ids: list[str], warmup_mode: bool = False):
         torch.hpu.synchronize()
         start_time = time.perf_counter()
 
@@ -1422,7 +1422,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         with open(csv_path, "a") as f:
             if not file_exists:
                 f.write("step_type,req_ids,s_time_s,d_time_s,batch_size,total_tokens,ctx_lens,computed_tokens,mm_items,cache_hits\n")
-            f.write(f"encoder_1,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f},{len(req_ids)},0,,,{mm_items},{cache_hits}\n")
+            f.write(f"{'' if not warmup_mode else 'warmup_'}encoder_1,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f},{len(req_ids)},0,,,{mm_items},{cache_hits}\n")
         for _, num_items, mm_kwargs_group in group_mm_kwargs_by_modality(
                 mm_kwargs,
                 device=self.device,
@@ -1435,6 +1435,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
             # 2. A list or tuple (length: num_items) of tensors, each of shape
             # (feature_size, hidden_size) in case the feature size is dynamic
             # depending on the input multimodal items.
+            self.model.warmup_mode = warmup_mode
             curr_group_outputs = self.model.embed_multimodal(**mm_kwargs_group)
 
             sanity_check_mm_encoder_outputs(
@@ -1485,7 +1486,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         with open(csv_path, "a") as f:
             if not file_exists:
                 f.write("step_type,req_ids,s_time_s,d_time_s,batch_size,total_tokens,ctx_lens,computed_tokens,mm_items,cache_hits\n")
-            f.write(f"encoder_2,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f},{len(req_ids)},0,,,{mm_items},{cache_hits}\n")
+            f.write(f"{'' if not warmup_mode else 'warmup_'}encoder_2,{';'.join(req_ids)},{start_time:.6f},{encoder_time:.6f},{len(req_ids)},0,,,{mm_items},{cache_hits}\n")
 
     # modified from: vllm/v1/worker/gpu_model_runner.py
     def _gather_mm_embeddings(
@@ -1572,13 +1573,14 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
         total_num_scheduled_tokens: Optional[int],
         scheduler_output: "SchedulerOutput",
         req_ids: list[str],
+        warmup_mode: bool,
     ) -> tuple[torch.Tensor | None, dict[str, Any] | None]:
         inputs_embeds = None
         model_mm_kwargs = None
         if self.supports_mm_inputs:
             # Run the multimodal encoder if any.
             with self.profiler.record_event('internal', 'prepare_input_encoders'):
-                self._execute_mm_encoder(scheduler_output, req_ids)
+                self._execute_mm_encoder(scheduler_output, req_ids, warmup_mode)
 
             mm_embeds, is_mm_embed = self._gather_mm_embeddings(scheduler_output,
                                                                 req_ids,
@@ -3521,6 +3523,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
             batch.token_ids.shape[0],
             scheduler_output,
             self.input_batch.req_ids,
+            warmup_mode,
         )
         htorch.core.mark_step()
 
@@ -3838,6 +3841,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
                     token_ids.shape[-1],
                     scheduler_output,
                     req_id,
+                    warmup_mode,
                 )
 
                 lora_mask, lora_logits_mask = self._configure_lora(token_ids, self.requests, req_id, True)
@@ -5033,6 +5037,7 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
 
     def _execute_dummy_scenario(self, requests, scheduled_tokens):
         from vllm.v1.core.sched.output import (SchedulerOutput, CachedRequestData)
+        self.warmup_mode = True
 
         sched_output = SchedulerOutput(
             scheduled_new_reqs=requests,
