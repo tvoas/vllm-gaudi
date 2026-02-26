@@ -562,7 +562,7 @@ class HpuQwen2_5_VLForConditionalGeneration(Qwen2_5_VLForConditionalGeneration):
         torch.hpu.synchronize()
         encoder_time = time.perf_counter() - start_time
         
-        step_type_str = f"{'' if not self.warmup_mode else 'warmup_'}embed_multimodal{first_img_info}"
+        step_type_str = f"embed_multimodal{first_img_info}"
         
         # Log to CSV
         csv_path = os.environ.get("VLLM_TIME_LOG_CSV", "/workspace/vllm_times.csv")

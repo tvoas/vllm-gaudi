@@ -336,7 +336,6 @@ class HPUWorker(WorkerBase):
             self.step_debug(f'step={self.step}')
         if self.step_profiler and self.step == self.profile_steps[0]:
             self.step_profiler.start()
-        self.model_runner.warmup_mode = False
         torch.hpu.synchronize()
         start_time = time.perf_counter()
         with track_graph_compile('HPUWorker.execute_model') \
