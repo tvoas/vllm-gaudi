@@ -290,7 +290,7 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
             ])
 
         import habana_frameworks.torch.hpu as hpu
-        self.graphed_forward = hpu.wrap_in_hpu_graph(self.forward, disable_tensor_cache=True)
+        hpu.wrap_in_hpu_graph(self, disable_tensor_cache=True)
 
 
     def pre_attn(self, x: torch.Tensor, grid_thw: torch.Tensor):
@@ -453,24 +453,15 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
             if hasattr(vision_buckets, 'use_graph'):
                 use_graph = vision_buckets.use_graph(bucket_size)
 
-            if use_graph:
-                hidden_states = self.graphed_forward(
-                    hidden_states,
-                    rotary_pos_emb_cos=rot_pos_emb_cos,
-                    rotary_pos_emb_sin=rot_pos_emb_sin,
-                    padding_attn_mask_window=padding_attn_mask_window,
-                    padding_attn_mask_full=padding_attn_mask_full,
-                    cu_seqlens=cu_seqlens
-                )
-            else:
-                hidden_states = self.forward(
-                    hidden_states,
-                    rotary_pos_emb_cos=rot_pos_emb_cos,
-                    rotary_pos_emb_sin=rot_pos_emb_sin,
-                    padding_attn_mask_window=padding_attn_mask_window,
-                    padding_attn_mask_full=padding_attn_mask_full,
-                    cu_seqlens=cu_seqlens
-                )
+            hidden_states = self.forward(
+                hidden_states,
+                rotary_pos_emb_cos=rot_pos_emb_cos,
+                rotary_pos_emb_sin=rot_pos_emb_sin,
+                padding_attn_mask_window=padding_attn_mask_window,
+                padding_attn_mask_full=padding_attn_mask_full,
+                cu_seqlens=cu_seqlens,
+                bypass_hpu_graphs=not use_graph
+            )
                 
             htcore.mark_step()
 
