@@ -331,7 +331,7 @@ class HPUWorker(WorkerBase):
     def execute_model(
         self,
         scheduler_output: "SchedulerOutput",
-        grammar_output: "GrammarOutput|None",
+        grammar_output: "GrammarOutput|None"=None,
     ) -> ModelRunnerOutput | None:
         if self.step_debug:
             self.step_debug(f'step={self.step}')
