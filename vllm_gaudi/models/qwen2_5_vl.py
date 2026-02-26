@@ -419,7 +419,7 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
                     + " to " \
                     + str(bucket_size)
                 logger.info(logger_msg)
-                cu_seqlens = F.pad(cu_seqlens, (0, 1), "constant", bucket_size)
+                #cu_seqlens = F.pad(cu_seqlens, (0, 1), "constant", bucket_size)
                 hidden_states = F.pad(hidden_states, (0, 0, 0, num_pad_tokens), "constant", 0.0)
                 rot_pos_emb_cos = F.pad(rot_pos_emb_cos, (0, 0, 0, num_pad_tokens), "constant", 0.0)
                 rot_pos_emb_sin = F.pad(rot_pos_emb_sin, (0, 0, 0, num_pad_tokens), "constant", 0.0)
