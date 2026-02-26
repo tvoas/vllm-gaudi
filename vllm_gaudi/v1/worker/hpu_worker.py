@@ -26,7 +26,7 @@ from vllm.distributed.kv_transfer import (
     get_kv_transfer_group,
     has_kv_transfer_group,
 )
-from vllm.distributed.parallel_state import get_tp_group
+from vllm.distributed.parallel_state import get_tp_group, get_pp_group
 from vllm.utils.torch_utils import (STR_DTYPE_TO_TORCH_DTYPE, set_random_seed)
 from vllm.v1.kv_cache_interface import (FullAttentionSpec, KVCacheConfig, KVCacheSpec, MambaSpec)
 from vllm.v1.outputs import (DraftTokenIds, AsyncModelRunnerOutput, ModelRunnerOutput)
@@ -331,6 +331,7 @@ class HPUWorker(WorkerBase):
     def execute_model(
         self,
         scheduler_output: "SchedulerOutput",
+        grammar_output: "GrammarOutput|None",
     ) -> ModelRunnerOutput | None:
         if self.step_debug:
             self.step_debug(f'step={self.step}')
@@ -390,6 +391,18 @@ class HPUWorker(WorkerBase):
         self.step += 1
         # NOTE(Harish): removed "if self.rank == 0 else None" for KV_connector enabling with TP>1
         # referred to Gpu Model Runner, KV connector aggregation expects valid output from all ranks
+
+        if isinstance(output, AsyncModelRunnerOutput):
+            output = output.get_output()
+        if not get_pp_group().is_last_rank:
+            pass
+        elif output is None:
+            output = self.model_runner.sample_tokens(grammar_output)
+            # Ensure outputs crossing Ray compiled DAG are serializable.
+            # AsyncModelRunnerOutput holds CUDA events and cannot be
+            # pickled.
+            if isinstance(output, AsyncModelRunnerOutput):
+                output = output.get_output()
         return output
 
     def get_supported_tasks(self) -> tuple[SupportedTask, ...]:

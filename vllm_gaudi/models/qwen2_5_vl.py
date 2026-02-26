@@ -289,10 +289,6 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
                 ) for layer_idx in range(depth)
             ])
 
-        import habana_frameworks.torch.hpu as hpu
-        hpu.wrap_in_hpu_graph(self, disable_tensor_cache=True)
-
-
     def pre_attn(self, x: torch.Tensor, grid_thw: torch.Tensor):
         # patchify
         seq_len, _ = x.size()
@@ -423,48 +419,28 @@ class Qwen2_5_VisionTransformerStaticShape(Qwen2_5_VisionTransformer):
                     + " to " \
                     + str(bucket_size)
                 logger.info(logger_msg)
-                #cu_seqlens = F.pad(cu_seqlens, (0, 1), "constant", bucket_size)
-                hidden_states = F.pad(hidden_states, (0, 0, 0, num_pad_tokens), "constant", 0.0)
-                rot_pos_emb_cos = F.pad(rot_pos_emb_cos, (0, 0, 0, num_pad_tokens), "constant", 0.0)
-                rot_pos_emb_sin = F.pad(rot_pos_emb_sin, (0, 0, 0, num_pad_tokens), "constant", 0.0)
+                cu_seqlens = F.pad(cu_seqlens, (0, 1), "constant", bucket_size)
+                cu_window_seqlens = F.pad(cu_window_seqlens, (0, 1), "constant", bucket_size)
+                hidden_states = F.pad(hidden_states, (0, 0, 0, num_pad_tokens), "constant", -100)
+                rot_pos_emb_cos = F.pad(
+                    rot_pos_emb_cos,  # [seq, dim]
+                    (0, 0, 0, num_pad_tokens),
+                    "constant",
+                    0.0)
+            rot_pos_emb_sin = F.pad(rot_pos_emb_sin, (0, 0, 0, num_pad_tokens), "constant", 0.0)
 
             padding_attn_mask_full = create_block_diagonal_attention_mask(cu_seqlens)
             padding_attn_mask_window = create_block_diagonal_attention_mask(cu_window_seqlens)
-            
-            # Pad the masks to bucket_size to ensure static shapes for the HPU Graph
-            if num_pad_tokens > 0:
-                padding_attn_mask_full = F.pad(
-                    padding_attn_mask_full, 
-                    (0, num_pad_tokens, 0, num_pad_tokens), 
-                    "constant", 
-                    False
-                )
-                padding_attn_mask_window = F.pad(
-                    padding_attn_mask_window, 
-                    (0, num_pad_tokens, 0, num_pad_tokens), 
-                    "constant", 
-                    False
-                )
 
             # static part
             htcore.mark_step()
-            
-            use_graph = True
-            if hasattr(vision_buckets, 'use_graph'):
-                use_graph = vision_buckets.use_graph(bucket_size)
-
-            hidden_states = self.forward(
-                hidden_states,
-                rotary_pos_emb_cos=rot_pos_emb_cos,
-                rotary_pos_emb_sin=rot_pos_emb_sin,
-                padding_attn_mask_window=padding_attn_mask_window,
-                padding_attn_mask_full=padding_attn_mask_full,
-                cu_seqlens=cu_seqlens,
-                bypass_hpu_graphs=not use_graph
-            )
-                
+            hidden_states = self.forward(hidden_states,
+                                         rotary_pos_emb_cos=rot_pos_emb_cos,
+                                         rotary_pos_emb_sin=rot_pos_emb_sin,
+                                         padding_attn_mask_window=padding_attn_mask_window,
+                                         padding_attn_mask_full=padding_attn_mask_full,
+                                         cu_seqlens=cu_seqlens)
             htcore.mark_step()
-
 
             # remove padding
             hidden_states = hidden_states[:curr_img_size, :, :]
