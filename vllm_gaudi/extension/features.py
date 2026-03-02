@@ -120,6 +120,7 @@ def get_features():
         Value('regional_compilation', True, env_var='VLLM_T_COMPILE_REGIONAL_COMPILATION', env_var_type=boolean),
         Value('dynamic_shapes_compilation', True, env_var='VLLM_T_COMPILE_DYNAMIC_SHAPES', env_var_type=boolean),
         Value('fullgraph_compilation', False, env_var='VLLM_T_COMPILE_FULLGRAPH', env_var_type=boolean),
+        Value('break_moe_graph_compilation', True, env_var='VLLM_T_COMPILE_BREAK_MOE_GRAPHS', env_var_type=boolean),
         Value('unified_attn', False),
         *unified_attn_dev_flags(),
         Value('scale_adjustment', True, env_var='VLLM_SCALE_ADJUSTMENT', env_var_type=boolean),

@@ -4346,6 +4346,16 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
             self.model = self.model.to("hpu")
             htcore.mark_step()
 
+        logger.info("Model loaded on HPU. Starting to apply model-specific patches and wrap in HPU graph if needed...")
+        logger.info(f"is_lazy: {htorch.utils.internal.is_lazy()}, break_moe_graph_compilation: {get_config().break_moe_graph_compilation}, is_moe: {self.vllm_config.model_config.is_moe}")
+        if not htorch.utils.internal.is_lazy() and get_config().break_moe_graph_compilation and self.vllm_config.model_config.is_moe:
+            # Automatically apply Dynamo bindings for all detected MoE models
+            from vllm_gaudi.models.utils import apply_universal_moe_graph_breaks
+            num_moe_layers = apply_universal_moe_graph_breaks(self.model)
+            if num_moe_layers > 0:
+                logger.info("Applied HPU MoE Graph Breaks to %d layers.", num_moe_layers)
+
+
         apply_model_specific_patches(self)
         hidden_layer_markstep_interval = int(os.getenv('VLLM_CONFIG_HIDDEN_LAYERS', '1'))
         model_config = getattr(self.model, "config", None)

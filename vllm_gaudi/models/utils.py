@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from vllm.multimodal import NestedTensors
 from vllm.model_executor.models import utils
 from vllm.model_executor.models.utils import (_embedding_count_expression, _flatten_embeddings)
@@ -56,6 +57,49 @@ def _merge_multimodal_embeddings(
         raise ValueError("Error during masked scatter operation") from e
 
     return inputs_embeds
+
+
+def _add_dynamo_graph_break_wrapper(module: nn.Module):
+    """Wraps a module's forward method to trigger a graph break before execution."""
+    if getattr(module, "_hpu_graph_breaks_installed", False):
+        return
+
+    orig_forward = module.forward
+
+    def wrapped_forward(*args, **kwargs):
+        torch._dynamo.graph_break()
+        return orig_forward(*args, **kwargs)
+
+    module.forward = wrapped_forward
+    module._hpu_graph_breaks_installed = True
+
+def apply_universal_moe_graph_breaks(model: nn.Module) -> int:
+    """
+    Recursively scans a model for standard LLM Decoder layers.
+    If the layer's MLP is determined to be an MoE, it applies graph breaks 
+    to the bounding normalization layers to drastically reduce compile times.
+    """
+    upgraded = 0
+    for _, module in model.named_modules():
+        # Identify standard Decoder layers by their core components
+        if (hasattr(module, "input_layernorm") and 
+            hasattr(module, "post_attention_layernorm") and 
+            hasattr(module, "mlp")):
+            
+            mlp = module.mlp
+            
+            # Heuristic to detect MoE structures in vLLM (Qwen, Mixtral, Deepseek, etc.)
+            is_moe = (
+                hasattr(mlp, "experts") or 
+                hasattr(mlp, "gate") or 
+                "moe" in type(mlp).__name__.lower()
+            )
+
+            if is_moe:
+                _add_dynamo_graph_break_wrapper(module.post_attention_layernorm)
+                upgraded += 1
+                
+    return upgraded
 
 
 utils._merge_multimodal_embeddings = _merge_multimodal_embeddings
