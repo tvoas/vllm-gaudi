@@ -5394,6 +5394,18 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
             pin_memory=self.pin_memory,
         ))
 
+    def _log_warmup_compile(self, phase: str, config_details: str, duration: float, compilations: int, recipes: str = ""):
+        import csv
+        import time
+        import os
+        csv_path = "/workspace/vllm_compile_times.csv"
+        file_exists = os.path.exists(csv_path)
+        with open(csv_path, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["timestamp", "phase", "config", "duration_sec", "compilations", "recipes"])
+            writer.writerow([time.time(), phase, config_details, f"{duration:.4f}", compilations, recipes])
+
     def warmup_multimodal_graphs(self, buckets):
 
         phase = 'Graph/Multimodal'
@@ -5441,16 +5453,33 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
                     image_args = candidates[idx]
                     width = 896  # pixels as in gemma3 config
                     height = 896  # pixels as in gemma3 config
+                    config_str = f"batch_size={candidates[idx]}"
                 else:
                     image_args = None
                     width, height = candidates[idx]
+                    config_str = f"width={width}, height={height}"
                 batched_dummy_mm_inputs = self._get_mm_dummy_batch(modality,
                                                                    image_args=image_args,
                                                                    width=width,
                                                                    height=height)
-                dummy_encoder_outputs = \
-                    self.model.embed_multimodal(
-                    **batched_dummy_mm_inputs)
+                
+                import time
+                import habana_frameworks.torch as htorch
+                from habana_frameworks.torch.hpu.metrics import metric_localcontext
+                
+                start_t = time.perf_counter()
+                with metric_localcontext("graph_compilation") as gc:
+                    dummy_encoder_outputs = \
+                        self.model.embed_multimodal(
+                        **batched_dummy_mm_inputs)
+                    htorch.hpu.synchronize()
+                
+                elapsed = time.perf_counter() - start_t
+                stats = gc.stats()
+                comps = stats[0][1] if len(stats) > 0 else 0
+                recipes = "|".join([r[0] for r in stats[3][1]]) if comps > 0 and len(stats) > 3 else ""
+                self._log_warmup_compile(f"encoder_{modality}", config_str, elapsed, comps, recipes)
+
                 if is_batch_based:
                     sanity_check_mm_encoder_outputs(
                         dummy_encoder_outputs,
@@ -5699,19 +5728,66 @@ class HPUModelRunner(HpuKVConnectorModelRunnerMixin):
                     self.warmup_sampler()
                     self.warmup_defragmenter()
 
-                # TODO(kzawora): align_workers
-                if self.unified_attn:
-                    self.warmup_unified_graphs(self.bucketing_manager.unified_buckets, kv_caches)
-                else:
-                    mem_post_prompt, prompt_batch_seq, prompt_captured_all = \
-                        self.warmup_graphs(
-                            self.bucketing_manager.prompt_buckets, True, kv_caches)
-                    self.log_graph_warmup_summary(self.bucketing_manager.prompt_buckets, True, mem_post_prompt)
-                    if not self.is_pooling_model:
-                        mem_post_decode, decode_batch_seq, decode_captured_all = \
-                          self.warmup_graphs(
-                              self.bucketing_manager.decode_buckets, False, kv_caches)
-                        self.log_graph_warmup_summary(self.bucketing_manager.decode_buckets, False, mem_post_decode)
+                # Dynamic wrappers to capture per-bucket compilation configs and timings
+                orig_warmup_graphs = self.warmup_graphs
+                def logging_warmup_graphs(buckets, is_prompt, kv_caches):
+                    import time
+                    import habana_frameworks.torch as htorch
+                    from habana_frameworks.torch.hpu.metrics import metric_localcontext
+                    last_res = None
+                    for b in buckets:
+                        t0 = time.perf_counter()
+                        with metric_localcontext("graph_compilation") as gc:
+                            last_res = orig_warmup_graphs([b], is_prompt, kv_caches)
+                            htorch.hpu.synchronize()
+                        dur = time.perf_counter() - t0
+                        stats = gc.stats()
+                        comps = stats[0][1] if len(stats) > 0 else 0
+                        recipes = "|".join([r[0] for r in stats[3][1]]) if comps > 0 and len(stats) > 3 else ""
+                        phase_str = "prefill" if is_prompt else "decode"
+                        self._log_warmup_compile(phase_str, f"bucket={b}", dur, comps, recipes)
+                    return last_res
+
+                orig_warmup_unified_graphs = getattr(self, "warmup_unified_graphs", None)
+                def logging_warmup_unified_graphs(buckets, kv_caches):
+                    import time
+                    import habana_frameworks.torch as htorch
+                    from habana_frameworks.torch.hpu.metrics import metric_localcontext
+                    for b in buckets:
+                        t0 = time.perf_counter()
+                        with metric_localcontext("graph_compilation") as gc:
+                            orig_warmup_unified_graphs([b], kv_caches)
+                            htorch.hpu.synchronize()
+                        dur = time.perf_counter() - t0
+                        stats = gc.stats()
+                        comps = stats[0][1] if len(stats) > 0 else 0
+                        recipes = "|".join([r[0] for r in stats[3][1]]) if comps > 0 and len(stats) > 3 else ""
+                        self._log_warmup_compile("unified_attn", f"bucket={b}", dur, comps, recipes)
+
+                # Temporarily patch the warmup functionality to feed isolated buckets
+                self.warmup_graphs = logging_warmup_graphs
+                if orig_warmup_unified_graphs:
+                    self.warmup_unified_graphs = logging_warmup_unified_graphs
+
+                try:
+                    # TODO(kzawora): align_workers
+                    if self.unified_attn:
+                        self.warmup_unified_graphs(self.bucketing_manager.unified_buckets, kv_caches)
+                    else:
+                        mem_post_prompt, prompt_batch_seq, prompt_captured_all = \
+                            self.warmup_graphs(
+                                self.bucketing_manager.prompt_buckets, True, kv_caches)
+                        self.log_graph_warmup_summary(self.bucketing_manager.prompt_buckets, True, mem_post_prompt)
+                        if not self.is_pooling_model:
+                            mem_post_decode, decode_batch_seq, decode_captured_all = \
+                              self.warmup_graphs(
+                                  self.bucketing_manager.decode_buckets, False, kv_caches)
+                            self.log_graph_warmup_summary(self.bucketing_manager.decode_buckets, False, mem_post_decode)
+                finally:
+                    # Restore original definitions
+                    self.warmup_graphs = orig_warmup_graphs
+                    if orig_warmup_unified_graphs:
+                        self.warmup_unified_graphs = orig_warmup_unified_graphs
 
         end_time = time.perf_counter()
         end_mem = HabanaMemoryProfiler.current_device_memory_usage()
